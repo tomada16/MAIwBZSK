@@ -22,7 +22,7 @@ print(f"\nBrakujące wartości:\n{data.isnull().sum()}")
 data = data.drop(columns=['person_id'])
 
 # Kodowanie zmiennych kategorycznych
-categorical_cols = data.select_dtypes(include='object').columns.tolist()
+categorical_cols = data.select_dtypes(include='str').columns.tolist()
 print(f"\n=== KOLUMNY KATEGORYCZNE ===")
 print(categorical_cols)
 
@@ -71,7 +71,6 @@ plt.ylabel('Liczność')
 plt.grid(axis='y', alpha=0.3)
 plt.tight_layout()
 plt.savefig('wykres1_rozkład_klas.png', dpi=120)
-plt.show()
 
 # --- Wykres 2: Histogramy wybranych cech numerycznych ---
 num_cols = [
@@ -91,7 +90,6 @@ for i, col in enumerate(num_cols):
 plt.suptitle('Rozkłady wybranych cech numerycznych', fontsize=13)
 plt.tight_layout()
 plt.savefig('wykres2_histogramy.png', dpi=120)
-plt.show()
 
 # --- Wykres 3: Scatter — czas snu vs jakość snu ---
 plt.figure(figsize=(7, 5))
@@ -109,7 +107,6 @@ plt.legend()
 plt.grid(alpha=0.3)
 plt.tight_layout()
 plt.savefig('wykres3_sen_jakosc.png', dpi=120)
-plt.show()
 
 # --- Wykres 4: Scatter — stres vs tętno ---
 plt.figure(figsize=(7, 5))
@@ -127,7 +124,6 @@ plt.legend()
 plt.grid(alpha=0.3)
 plt.tight_layout()
 plt.savefig('wykres4_stres_tetno.png', dpi=120)
-plt.show()
 
 # --- Wykres 5: Macierz korelacji ---
 top_cols = [
@@ -156,4 +152,3 @@ for i in range(len(top_cols)):
 ax.set_title('Macierz korelacji wybranych cech')
 plt.tight_layout()
 plt.savefig('wykres5_korelacja.png', dpi=120)
-plt.show()
