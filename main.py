@@ -152,3 +152,112 @@ for i in range(len(top_cols)):
 ax.set_title('Macierz korelacji wybranych cech')
 plt.tight_layout()
 plt.savefig('wykres5_korelacja.png', dpi=120)
+
+# ============================================================
+# EKSPERYMENT 1
+# Wpływ stopniowego undersamplingu na klasyfikację
+#
+# Kroki balansowania (dynamicznie wg liczności klas):
+#   Brak undersamp. — oryginalne liczności
+#   Under k1     — najliczniejsza → poziom 2. najliczniejszej
+#   Under k2     — 2 najliczniejsze → poziom 3. najliczniejszej
+#   Under k3     — wszystkie → poziom najmniej licznej
+# ============================================================
+from imblearn.under_sampling import RandomUnderSampler
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.metrics import balanced_accuracy_score
+
+print("\n" + "="*60)
+print("EKSPERYMENT 1: Stopniowy undersampling")
+print("="*60)
+
+unique_exp, counts_exp = np.unique(y, return_counts=True)
+sorted_idx = np.argsort(counts_exp)[::-1]
+sorted_classes = unique_exp[sorted_idx]
+sorted_counts = counts_exp[sorted_idx]
+
+print(f"\nKlasy posortowane wg liczności (malejąco):")
+for cls, cnt in zip(sorted_classes, sorted_counts):
+    print(f"  Klasa {cls} ({class_names[cls]}): {cnt} próbek")
+
+# Definicja kroków undersamplingu jako słowniki {klasa: docelowa_liczność}
+steps = {"Brak": dict(zip(sorted_classes, sorted_counts))}
+
+for krok in range(1, 4):
+    target = sorted_counts[krok]
+    steps[f"Under k{krok}"] = {
+        cls: min(cnt, target) for cls, cnt in zip(sorted_classes, sorted_counts)
+    }
+
+print(f"\nZdefiniowane kroki undersamplingu:")
+for step_name, strategy in steps.items():
+    total = sum(strategy.values())
+    print(f"  {step_name}: łącznie {total} próbek → {strategy}")
+
+clfs = {
+    'GNB': GaussianNB(),
+    'KNN': KNeighborsClassifier(),
+    'DT':  DecisionTreeClassifier()
+}
+
+n_splits = 2
+n_repeats = 5
+rskf = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats)
+
+print(f"\nKlasyfikatory: {list(clfs.keys())}")
+print(f"Walidacja: RepeatedStratifiedKFold(n_splits={n_splits}, n_repeats={n_repeats})")
+
+# results[krok][clf] = lista 10 wyników BAC
+results = {step: {clf: [] for clf in clfs} for step in steps}
+
+print(f"\n=== WYNIKI ===")
+for step_name, sampling_strategy in steps.items():
+    if step_name == "Brak":
+        X_s, y_s = X, y
+    else:
+        rus = RandomUnderSampler(sampling_strategy=sampling_strategy)
+        X_s, y_s = rus.fit_resample(X, y)
+
+    u_s, c_s = np.unique(y_s, return_counts=True)
+    print(f"\n{step_name} (rozmiar zbioru: {len(y_s)}):")
+    for u, c in zip(u_s, c_s):
+        print(f"  Klasa {u} ({class_names[u]}): {c} próbek")
+
+    for clf_name, clf in clfs.items():
+        scores = []
+        for train_idx, test_idx in rskf.split(X_s, y_s):
+            X_train, X_test = X_s[train_idx], X_s[test_idx]
+            y_train, y_test = y_s[train_idx], y_s[test_idx]
+            clf.fit(X_train, y_train)
+            y_pred = clf.predict(X_test)
+            scores.append(balanced_accuracy_score(y_test, y_pred))
+        results[step_name][clf_name] = scores
+        print(f"  {clf_name}: mean={np.mean(scores):.3f}, std={np.std(scores):.3f}")
+
+# --- Wykres eksperymentu 1 ---
+step_labels = list(steps.keys())
+colors_clf = ['steelblue', 'tomato', 'mediumseagreen']
+x_bar = np.arange(len(step_labels))
+width = 0.25
+
+fig, ax = plt.subplots(figsize=(10, 5))
+for i, clf_name in enumerate(clfs):
+    means = [np.mean(results[s][clf_name]) for s in step_labels]
+    stds = [np.std(results[s][clf_name]) for s in step_labels]
+    bars = ax.bar(x_bar + i * width, means, width, yerr=stds, label=clf_name,
+                  color=colors_clf[i], edgecolor='black', capsize=4, alpha=0.85)
+    for bar, mean in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.005,
+                f'{mean:.3f}', ha='center', va='bottom', fontsize=8)
+
+ax.set_xticks(x_bar + width)
+ax.set_xticklabels(step_labels)
+ax.set_ylabel('Balanced Accuracy Score')
+ax.set_title('Eksperyment 1: Wpływ stopniowego undersamplingu na klasyfikację')
+ax.legend()
+ax.grid(axis='y', alpha=0.3)
+plt.tight_layout()
+plt.savefig('exp1_undersampling.png', dpi=120)

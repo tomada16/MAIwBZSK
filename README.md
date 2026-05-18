@@ -27,3 +27,18 @@ Klasyfikacja wieloklasowa — na podstawie cech wejściowych przewidujemy jedną
 - **Styl życia:** liczba kroków, ćwiczenia, kofeina, alkohol, czas przed ekranem, drzemki
 - **Zdrowie:** tętno spoczynkowe, poziom stresu, chronotyp, stan zdrowia psychicznego
 - **Inne:** temperatura pokoju, praca zmianowa, typ dnia, sezon
+
+### Eksperyment 1: Wpływ stopniowego undersamplingu na jakość klasyfikacji
+
+Eksperyment bada, jak sztuczne wyrównywanie dysproporcji klas za pomocą podpróbkowania losowego (*Random Undersampling*) wpływa na zdolności predykcyjne modeli. Modele oceniane są za pomocą metryki **Balanced Accuracy Score** w procedurze 2-krotnej powtórzonej walidacji krzyżowej (5 powtórzeń, łącznie 10 foldów).
+
+Badanie podzielono na 4 etapy (kroki) stopniowego redukowania klas większościowych:
+*   **Brak:** Oryginalny, niezbalansowany zbiór danych.
+*   **Under k1:** Redukcja wyłącznie najliczniejszej klasy do poziomu liczności drugiej najliczniejszej klasy.
+*   **Under k2:** Redukcja dwóch najliczniejszych klas do poziomu trzeciej klasy.
+*   **Under k3 (Pełny balans):** Redukcja wszystkich klas do poziomu klasy najmniej licznej (`Severe`).
+
+**Testowane klasyfikatory:**
+*   Gaussian Naive Bayes (`GNB`)
+*   K-Nearest Neighbors (`KNN`)
+*   Decision Tree (`DT`)
