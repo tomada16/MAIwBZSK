@@ -169,6 +169,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.metrics import balanced_accuracy_score
+from scipy.stats import shapiro, ttest_rel
 
 print("\n" + "="*60)
 print("EKSPERYMENT 1: Stopniowy undersampling")
@@ -237,6 +238,30 @@ for step_name, sampling_strategy in steps.items():
         results[step_name][clf_name] = scores
         print(f"  {clf_name}: mean={np.mean(scores):.3f}, std={np.std(scores):.3f}")
 
+# --- Analiza statystyczna: DT — Brak vs Under krok3 ---
+print(f"\n=== ANALIZA STATYSTYCZNA: DT — Brak vs Under k3 ===")
+alpha = 0.05
+sc_brak = np.array(results["Brak"]["DT"])
+sc_full = np.array(results["Under k3"]["DT"])
+
+print(f"\nWyniki DT (Brak):     {np.round(sc_brak, 3)}")
+print(f"Wyniki DT (Under k3): {np.round(sc_full, 3)}")
+
+_, p1 = shapiro(sc_brak)
+_, p2 = shapiro(sc_full)
+print(f"\nTest Shapiro-Wilka (normalność rozkładu):")
+print(f"  Brak:     p={p1:.3f} → rozkład normalny: {p1 > alpha}")
+print(f"  Under k3: p={p2:.3f} → rozkład normalny: {p2 > alpha}")
+
+t_stat, p_val = ttest_rel(sc_brak, sc_full)
+print(f"\nSparowany t-test:")
+print(f"  t={t_stat:.3f}, p={p_val:.3f}")
+if p_val < alpha:
+    winner = "Brak" if np.mean(sc_brak) > np.mean(sc_full) else "Under k3"
+    print(f"  Różnica istotna statystycznie (p < {alpha}). Lepszy wariant: {winner}")
+else:
+    print(f"  Brak istotnej różnicy statystycznej (p >= {alpha}).")
+
 # --- Wykres eksperymentu 1 ---
 step_labels = list(steps.keys())
 colors_clf = ['steelblue', 'tomato', 'mediumseagreen']
@@ -261,3 +286,35 @@ ax.legend()
 ax.grid(axis='y', alpha=0.3)
 plt.tight_layout()
 plt.savefig('exp1_undersampling.png', dpi=120)
+
+# --- Wykres punktowy rozkładu danych dla każdego kroku undersamplingu ---
+# Cechy o największej korelacji: sleep_duration_hrs vs sleep_quality_score
+col_names = data.drop(columns=['sleep_disorder_risk']).columns.tolist()
+idx_dur = col_names.index('sleep_duration_hrs')
+idx_qual = col_names.index('sleep_quality_score')
+
+fig, axes = plt.subplots(1, 4, figsize=(18, 4))
+
+for ax_i, (step_name, sampling_strategy) in enumerate(steps.items()):
+    if step_name == "Brak":
+        X_plot, y_plot = X, y
+    else:
+        rus = RandomUnderSampler(sampling_strategy=sampling_strategy, random_state=42)
+        X_plot, y_plot = rus.fit_resample(X, y)
+
+    for cls_idx, cls_name in enumerate(class_names):
+        mask = y_plot == cls_idx
+        axes[ax_i].scatter(
+            X_plot[mask, idx_dur], X_plot[mask, idx_qual],
+            s=10, alpha=0.5, label=cls_name, color=colors[cls_idx]
+        )
+
+    axes[ax_i].set_title(f"{step_name}\n(n={len(y_plot)})")
+    axes[ax_i].set_xlabel('sleep_duration_hrs')
+    axes[ax_i].set_ylabel('sleep_quality_score')
+    axes[ax_i].grid(alpha=0.3)
+
+axes[0].legend(fontsize=8)
+plt.suptitle('Rozkład próbek w poszczególnych krokach undersamplingu', fontsize=13)
+plt.tight_layout()
+plt.savefig('exp1_rozklad_scatter.png', dpi=120)
