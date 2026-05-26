@@ -238,29 +238,31 @@ for step_name, sampling_strategy in steps.items():
         results[step_name][clf_name] = scores
         print(f"  {clf_name}: mean={np.mean(scores):.3f}, std={np.std(scores):.3f}")
 
-# --- Analiza statystyczna: DT — Brak vs Under krok3 ---
-print(f"\n=== ANALIZA STATYSTYCZNA: DT — Brak vs Under k3 ===")
+# --- Analiza statystyczna: DT i KNN — Brak vs każdy krok ---
+print(f"\n=== ANALIZA STATYSTYCZNA ===")
 alpha = 0.05
-sc_brak = np.array(results["Brak"]["DT"])
-sc_full = np.array(results["Under k3"]["DT"])
+other_steps = [s for s in steps.keys() if s != "Brak"]
 
-print(f"\nWyniki DT (Brak):     {np.round(sc_brak, 3)}")
-print(f"Wyniki DT (Under k3): {np.round(sc_full, 3)}")
+for clf_name in ['DT', 'KNN']:
+    print(f"\n--- {clf_name}: Brak vs pozostałe kroki ---")
+    sc_brak = np.array(results["Brak"][clf_name])
+    _, p_norm = shapiro(sc_brak)
+    print(f"Shapiro (Brak): p={p_norm:.3f} → rozkład normalny: {p_norm > alpha}")
 
-_, p1 = shapiro(sc_brak)
-_, p2 = shapiro(sc_full)
-print(f"\nTest Shapiro-Wilka (normalność rozkładu):")
-print(f"  Brak:     p={p1:.3f} → rozkład normalny: {p1 > alpha}")
-print(f"  Under k3: p={p2:.3f} → rozkład normalny: {p2 > alpha}")
-
-t_stat, p_val = ttest_rel(sc_brak, sc_full)
-print(f"\nSparowany t-test:")
-print(f"  t={t_stat:.3f}, p={p_val:.3f}")
-if p_val < alpha:
-    winner = "Brak" if np.mean(sc_brak) > np.mean(sc_full) else "Under k3"
-    print(f"  Różnica istotna statystycznie (p < {alpha}). Lepszy wariant: {winner}")
-else:
-    print(f"  Brak istotnej różnicy statystycznej (p >= {alpha}).")
+    for step_name in other_steps:
+        sc_step = np.array(results[step_name][clf_name])
+        _, p_norm2 = shapiro(sc_step)
+        t_stat, p_val = ttest_rel(sc_brak, sc_step)
+        mean_brak = np.mean(sc_brak)
+        mean_step = np.mean(sc_step)
+        print(f"\n  Brak ({mean_brak:.3f}) vs {step_name} ({mean_step:.3f}):")
+        print(f"    Shapiro ({step_name}): p={p_norm2:.3f} | rozkład normalny: {p_norm2 > alpha}")
+        print(f"    t-test: t={t_stat:.3f}, p={p_val:.3f}")
+        if p_val < alpha:
+            winner = "Brak" if mean_brak > mean_step else step_name
+            print(f"    Różnica istotna statystycznie (p < {alpha}). Lepszy wariant: {winner}")
+        else:
+            print(f"    Brak istotnej różnicy statystycznej (p >= {alpha}).")
 
 # --- Wykres eksperymentu 1 ---
 step_labels = list(steps.keys())
@@ -318,3 +320,180 @@ axes[0].legend(fontsize=8)
 plt.suptitle('Rozkład próbek w poszczególnych krokach undersamplingu', fontsize=13)
 plt.tight_layout()
 plt.savefig('exp1_rozklad_scatter.png', dpi=120)
+
+# ============================================================
+# EKSPERYMENT 2
+# Wpływ cech na klasyfikację: ablacja i selekcja wprzód
+#
+# Faza A — Drop-one: usuń po jednej cesze, porównaj z bazą (wszystkie cechy)
+# Faza B — Forward selection: zacznij od pustego zbioru, dodawaj najlepszą cechę
+# Klasyfikator: DT (jako reprezentatywny, wrażliwy na cechy)
+# Miara: balanced_accuracy_score, RepeatedStratifiedKFold(2,5)
+# ============================================================
+
+print("\n" + "="*60)
+print("EKSPERYMENT 2: Wpływ cech na klasyfikację")
+print("="*60)
+
+col_names_exp2 = data.drop(columns=['sleep_disorder_risk']).columns.tolist()
+print(f"\nLista wszystkich cech ({len(col_names_exp2)}):")
+for i, c in enumerate(col_names_exp2):
+    print(f"  [{i}] {c}")
+
+# Pomocnicza funkcja: ewaluacja klasyfikatora na podzbiorze cech
+def evaluate_subset(X_full, y, feature_indices, clf, cv):
+    """Zwraca listę wyników BAC dla podanego podzbioru cech."""
+    X_sub = X_full[:, feature_indices]
+    scores = []
+    for train_idx, test_idx in cv.split(X_sub, y):
+        clf.fit(X_sub[train_idx], y[train_idx])
+        y_pred = clf.predict(X_sub[test_idx])
+        scores.append(balanced_accuracy_score(y[test_idx], y_pred))
+    return scores
+
+rskf_exp2 = RepeatedStratifiedKFold(n_splits=2, n_repeats=5, random_state=42)
+dt_exp2 = DecisionTreeClassifier(random_state=42)
+all_indices = list(range(len(col_names_exp2)))
+
+# ── FAZA A: Drop-one ablation ────────────────────────────────
+
+print("\n=== FAZA A: Drop-one ablation (klasyfikator: DT) ===")
+
+# Wyniki bazowe (wszystkie cechy)
+baseline_scores = evaluate_subset(X, y, all_indices, dt_exp2, rskf_exp2)
+baseline_mean = np.mean(baseline_scores)
+print(f"\nBaseline (wszystkie {len(all_indices)} cechy): mean={baseline_mean:.3f}, std={np.std(baseline_scores):.3f}")
+
+ablation_results = {}   # {nazwa_cechy: lista_wyników}
+ablation_deltas  = {}   # {nazwa_cechy: delta_vs_baseline}
+
+print(f"\n{'Cecha':<35} {'Mean BAC':>9} {'Std':>7} {'Δ vs baseline':>14} {'Wpływ'}")
+print("-" * 75)
+
+for drop_i, col in enumerate(col_names_exp2):
+    remaining = [i for i in all_indices if i != drop_i]
+    scores = evaluate_subset(X, y, remaining, DecisionTreeClassifier(random_state=42), rskf_exp2)
+    ablation_results[col] = scores
+    delta = np.mean(scores) - baseline_mean
+    ablation_deltas[col] = delta
+
+    if delta > 0.005:
+        impact = "✓ POPRAWA (usunięcie pomaga)"
+    elif delta < -0.005:
+        impact = "✗ POGORSZENIE (cecha ważna)"
+    else:
+        impact = "≈ neutralna"
+
+    print(f"  bez {col:<30} {np.mean(scores):>9.3f} {np.std(scores):>7.3f} {delta:>+14.3f}  {impact}")
+
+# Posortuj cechy wg wpływu na dokładność (rosnąco = usunięcie najbardziej szkodzi)
+sorted_by_delta = sorted(ablation_deltas.items(), key=lambda x: x[1])
+most_important = sorted_by_delta[0][0]   # usunięcie powoduje największy spadek
+least_important = sorted_by_delta[-1][0] # usunięcie powoduje największy wzrost (lub neutralne)
+
+print(f"\nNajważniejsza cecha (jej brak najbardziej szkodzi): {most_important} (Δ={ablation_deltas[most_important]:+.3f})")
+print(f"Najsłabsza cecha   (jej brak najbardziej pomaga):  {least_important} (Δ={ablation_deltas[least_important]:+.3f})")
+
+# Test statystyczny: baseline vs bez_najważniejszej_cechy
+print(f"\n=== ANALIZA STATYSTYCZNA: baseline vs bez '{most_important}' ===")
+sc_a = np.array(baseline_scores)
+sc_b = np.array(ablation_results[most_important])
+
+_, p_a = shapiro(sc_a)
+_, p_b = shapiro(sc_b)
+print(f"Shapiro-Wilk — baseline: p={p_a:.3f}, bez cechy: p={p_b:.3f}")
+
+t_stat2, p_val2 = ttest_rel(sc_a, sc_b)
+print(f"Sparowany t-test: t={t_stat2:.3f}, p={p_val2:.3f}")
+if p_val2 < 0.05:
+    winner2 = "baseline" if np.mean(sc_a) > np.mean(sc_b) else f"bez {most_important}"
+    print(f"  Różnica istotna statystycznie (p < 0.05). Lepszy wariant: {winner2}")
+else:
+    print(f"  Brak istotnej różnicy statystycznej (p ≥ 0.05).")
+
+# ── FAZA B: Forward selection ────────────────────────────────
+
+print("\n=== FAZA B: Forward selection (klasyfikator: DT) ===")
+
+selected_indices = []
+remaining_indices = list(all_indices)
+forward_history = []   # lista kroków: (nazwa_cechy, mean_bac, std_bac, lista_wyników)
+
+print(f"\n{'Krok':<6} {'Dodana cecha':<35} {'Mean BAC':>9} {'Std':>7} {'Δ vs poprzedni':>15}")
+print("-" * 75)
+
+prev_mean = 0.0
+for step in range(len(col_names_exp2)):
+    best_score_mean = -1
+    best_idx = None
+    best_scores = None
+
+    for candidate in remaining_indices:
+        trial_indices = selected_indices + [candidate]
+        scores = evaluate_subset(X, y, trial_indices, DecisionTreeClassifier(random_state=42), rskf_exp2)
+        if np.mean(scores) > best_score_mean:
+            best_score_mean = np.mean(scores)
+            best_idx = candidate
+            best_scores = scores
+
+    selected_indices.append(best_idx)
+    remaining_indices.remove(best_idx)
+
+    delta_fwd = best_score_mean - prev_mean
+    forward_history.append((col_names_exp2[best_idx], best_score_mean, np.std(best_scores), best_scores))
+    print(f"  {step+1:<4} {col_names_exp2[best_idx]:<35} {best_score_mean:>9.3f} {np.std(best_scores):>7.3f} {delta_fwd:>+15.3f}")
+    prev_mean = best_score_mean
+
+# Optymalny podzbiór: maksymalne BAC w forward selection
+best_step = int(np.argmax([h[1] for h in forward_history]))
+print(f"\nOptymalny zbiór cech: {best_step+1} cech (step {best_step+1}), "
+      f"mean BAC = {forward_history[best_step][1]:.3f}")
+print("  Cechy:", [forward_history[i][0] for i in range(best_step+1)])
+
+# ── Wykresy Eksperymentu 2 ────────────────────────────────────
+
+# Wykres A: Drop-one — delta BAC (sortowany)
+fig, ax = plt.subplots(figsize=(12, 5))
+sorted_cols = [x[0] for x in sorted_by_delta]
+sorted_deltas = [x[1] for x in sorted_by_delta]
+bar_colors = ['tomato' if d < -0.005 else 'mediumseagreen' if d > 0.005 else 'steelblue'
+              for d in sorted_deltas]
+bars = ax.barh(sorted_cols, sorted_deltas, color=bar_colors, edgecolor='black', alpha=0.85)
+ax.axvline(0, color='black', linewidth=1.2, linestyle='--')
+for bar, val in zip(bars, sorted_deltas):
+    ax.text(val + (0.001 if val >= 0 else -0.001), bar.get_y() + bar.get_height() / 2,
+            f'{val:+.3f}', va='center', ha='left' if val >= 0 else 'right', fontsize=8)
+ax.set_xlabel('Δ BAC (względem baseline ze wszystkimi cechami)')
+ax.set_title('Eksperyment 2A: Zmiana dokładności po usunięciu jednej cechy (DT)\n'
+             '  Czerwony = cecha ważna (jej brak szkodzi) | Zielony = cecha zbędna/szkodliwa')
+ax.grid(axis='x', alpha=0.3)
+plt.tight_layout()
+plt.savefig('exp2a_drop_one.png', dpi=120)
+
+# Wykres B: Forward selection — krzywa BAC
+fwd_means = [h[1] for h in forward_history]
+fwd_stds = [h[2] for h in forward_history]
+fwd_labels = [f"{i+1}. {h[0]}" for i, h in enumerate(forward_history)]
+
+fig, ax = plt.subplots(figsize=(13, 5))
+ax.plot(range(1, len(fwd_means)+1), fwd_means, marker='o', color='steelblue',
+        linewidth=2, markersize=6, label='Mean BAC')
+ax.fill_between(range(1, len(fwd_means)+1),
+                np.array(fwd_means) - np.array(fwd_stds),
+                np.array(fwd_means) + np.array(fwd_stds),
+                alpha=0.2, color='steelblue', label='±1 std')
+ax.axhline(baseline_mean, color='tomato', linestyle='--', linewidth=1.5,
+           label=f'Baseline (wszystkie cechy): {baseline_mean:.3f}')
+ax.axvline(best_step+1, color='mediumseagreen', linestyle=':', linewidth=1.5,
+           label=f'Optimum: {best_step+1} cech')
+ax.set_xticks(range(1, len(fwd_means)+1))
+ax.set_xticklabels([h[0] for h in forward_history], rotation=45, ha='right', fontsize=8)
+ax.set_xlabel('Kolejno dodawane cechy (forward selection)')
+ax.set_ylabel('Mean Balanced Accuracy Score')
+ax.set_title('Eksperyment 2B: Forward selection — wzrost dokładności wraz z dodawaniem cech (DT)')
+ax.legend()
+ax.grid(alpha=0.3)
+plt.tight_layout()
+plt.savefig('exp2b_forward_selection.png', dpi=120)
+
+print("\nWykresy zapisane: exp2a_drop_one.png, exp2b_forward_selection.png")
